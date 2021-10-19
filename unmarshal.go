@@ -1,4 +1,4 @@
-package main
+package minecraftgo
 
 import (
 	"encoding/binary"
