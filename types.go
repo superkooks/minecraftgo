@@ -49,8 +49,7 @@ func (s *String) Deserialize(data []byte) []byte {
 	length := new(VarInt)
 	data = length.Deserialize(data)
 
-	offset := len(length.Serialize())
-	*s = String(data[:int(*length)+offset])
+	*s = String(data[:int(*length)])
 
 	return data[int(*length):]
 }
