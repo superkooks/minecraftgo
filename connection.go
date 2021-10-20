@@ -1,6 +1,7 @@
 package minecraftgo
 
 import (
+	"bytes"
 	"net"
 )
 
@@ -32,8 +33,6 @@ func Ping(ip *net.TCPAddr) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	c.TCP.SetReadBuffer(100000000000000000)
-
 	// Send handshake (state=1)
 	p := Handshake{
 		Version: 340,
@@ -52,14 +51,31 @@ func Ping(ip *net.TCPAddr) ([]byte, error) {
 	}))
 
 	// Wait for response
-	b := make([]byte, 22816040000)
+	b := make([]byte, 2048)
 	n, err := c.TCP.Read(b)
 	if err != nil {
 		return []byte{}, err
 	}
 
+	// Used to get initial length of packet
 	var q UncompressedPacket
 	Unmarshal(b[:n], &q)
+
+	fullBuf := new(bytes.Buffer)
+	fullBuf.Write(b[:n])
+
+	// Read the rest of the bytes
+	for fullBuf.Len() < int(q.Length)-5 {
+		b := make([]byte, 2048)
+		n, err := c.TCP.Read(b)
+		if err != nil {
+			return []byte{}, err
+		}
+
+		fullBuf.Write(b[:n])
+	}
+
+	Unmarshal(fullBuf.Bytes(), &q)
 
 	var out String
 	Unmarshal(q.Data, &out)
