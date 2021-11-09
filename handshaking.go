@@ -9,40 +9,40 @@ type Handshake struct {
 }
 
 // SERVER
-type Response struct {
-	Description Text        `json:"description"`
-	Players     Players     `json:"players"`
-	Version     VersionInfo `json:"version"`
-	Favicon     string      `json:"favicon"`
-	ModInfo     ModInfo     `json:"modinfo,omitempty"`
+type PingResponse struct {
+	Description PingText        `json:"description"`
+	Players     PingPlayers     `json:"players"`
+	Version     PingVersionInfo `json:"version"`
+	Favicon     string          `json:"favicon"`
+	ModInfo     PingModInfo     `json:"modinfo,omitempty"`
 }
 
-type Text struct {
+type PingText struct {
 	Text string `json:"text"`
 }
 
-type Players struct {
-	Max    int      `json:"max"`
-	Online int      `json:"online"`
-	Sample []Player `json:"sample"`
+type PingPlayers struct {
+	Max    int          `json:"max"`
+	Online int          `json:"online"`
+	Sample []PingPlayer `json:"sample"`
 }
 
-type Player struct {
+type PingPlayer struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-type VersionInfo struct {
+type PingVersionInfo struct {
 	Name     string `json:"name"`
 	Protocol int    `json:"protocol"`
 }
 
-type ModInfo struct {
-	Type    string `json:"type"`
-	ModList []Mod  `json:"modList"`
+type PingModInfo struct {
+	Type    string    `json:"type"`
+	ModList []PingMod `json:"modList"`
 }
 
-type Mod struct {
+type PingMod struct {
 	ModID   string `json:"modid"`
 	Version string `json:"version"`
 }

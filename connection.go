@@ -2,24 +2,70 @@ package minecraftgo
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"net"
+	"net/http"
 )
 
 type Conn struct {
-	TCP        *net.TCPConn
-	Compressed bool
+	TCP         *net.TCPConn
+	Compressed  bool
+	AccessToken string
 }
 
-func Connect(ip *net.TCPAddr) (*Conn, error) {
-	c := new(Conn)
+func Connect(ip *net.TCPAddr, username string, email string, password string) (*Conn, error) {
+	// Authenticate the user with Mojang
+	resp, err := http.Post("https://authserver.mojang.com/authenticate", "application/json", bytes.NewBufferString(`
+		{
+			"agent": {
+				"name": "Minecraft",
+				"version": 1
+			},
+			"username": "`+email+`",
+			"password": "`+password+`",
+			"requestUser": true
+		}
+	`))
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
 
-	var err error
+	var authResp APIAuthResponse
+	j := json.NewDecoder(resp.Body)
+	j.Decode(&authResp)
+	fmt.Println(authResp)
+
+	c := new(Conn)
+	c.AccessToken = authResp.AccessToken
+
 	c.TCP, err = net.DialTCP("tcp", nil, ip)
 	if err != nil {
 		return nil, err
 	}
 
+	go c.Listener()
+
 	// Send handshake (state=2)
+	c.TCP.Write(Marshal(UncompressedPacket{
+		PacketID: 0,
+		Data: Marshal(Handshake{
+			Version: 340,
+			Address: String(ip.IP.String() + "\x00FML\x00"), // Not used
+			Port:    uint16(ip.Port),                        // Not used
+			Next:    2,
+		}),
+	}))
+
+	// Send Login Start
+	c.TCP.Write(Marshal(UncompressedPacket{
+		PacketID: 0,
+		Data: Marshal(LoginStart{
+			Username: String(username),
+		}),
+	}))
+	fmt.Println("sent login request")
 
 	return c, nil
 }
