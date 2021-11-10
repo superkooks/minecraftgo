@@ -15,3 +15,10 @@ type EncryptionRequest struct {
 	VerifyTokenLength VarInt
 	VerifyToken       []byte
 }
+
+type EncryptionResponse struct {
+	SharedSecretLen VarInt
+	SharedSecret    []byte
+	VerifyTokenLen  VarInt
+	VerifyToken     []byte
+}

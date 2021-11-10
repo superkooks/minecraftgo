@@ -2,6 +2,7 @@ package minecraftgo
 
 import (
 	"bytes"
+	"crypto/cipher"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -9,9 +10,11 @@ import (
 )
 
 type Conn struct {
-	TCP         *net.TCPConn
-	Compressed  bool
-	AccessToken string
+	TCP        *net.TCPConn
+	Compressed bool
+	Encrypted  bool
+	AuthResp   APIAuthResponse
+	Cipher     cipher.Stream
 }
 
 func Connect(ip *net.TCPAddr, username string, email string, password string) (*Conn, error) {
@@ -35,10 +38,9 @@ func Connect(ip *net.TCPAddr, username string, email string, password string) (*
 	var authResp APIAuthResponse
 	j := json.NewDecoder(resp.Body)
 	j.Decode(&authResp)
-	fmt.Println(authResp)
 
 	c := new(Conn)
-	c.AccessToken = authResp.AccessToken
+	c.AuthResp = authResp
 
 	c.TCP, err = net.DialTCP("tcp", nil, ip)
 	if err != nil {
