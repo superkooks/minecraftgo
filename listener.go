@@ -2,6 +2,7 @@ package minecraftgo
 
 import (
 	"bytes"
+	"compress/zlib"
 	"crypto/aes"
 	"crypto/rand"
 	"crypto/rsa"
@@ -14,9 +15,28 @@ import (
 	"strings"
 )
 
+func (c *Conn) ReadStream() {
+	for {
+		b := make([]byte, 2048)
+		n, err := c.TCP.Read(b)
+		if err != nil {
+			panic(err)
+		}
+
+		_, err = c.Buffer.Write(b[:n])
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
 func (c *Conn) Listener() {
 	for {
+		// TODO Deduplicate the code
+
 		if !c.Compressed {
+			c.Buffer.
+
 			b := make([]byte, 2048)
 			n, err := c.TCP.Read(b)
 			if err != nil {
@@ -35,7 +55,7 @@ func (c *Conn) Listener() {
 				fullBuf.Write(b[:n])
 
 				// Read the rest of the bytes
-				for fullBuf.Len() < int(q.Length)-5 {
+				for fullBuf.Len() < int(q.Length)-3 {
 					b := make([]byte, 2048)
 					n, err := c.TCP.Read(b)
 					if err != nil {
@@ -54,7 +74,7 @@ func (c *Conn) Listener() {
 				fullBuf.Write(b[:n])
 
 				// Read the rest of the bytes
-				for fullBuf.Len() < int(q.Length)-5 {
+				for fullBuf.Len() < int(q.Length)-3 {
 					b := make([]byte, 2048)
 					n, err := c.TCP.Read(b)
 					if err != nil {
@@ -155,11 +175,87 @@ func (c *Conn) Listener() {
 				c.Cipher = newCFB8(block, sharedSecret, true)
 
 			case 0x03:
-				fmt.Println("Enabling compression")
-				c.Compressed = true
+				// Set Compression
+				var comp SetCompression
+				Unmarshal(q.Data, &comp)
+
+				if comp.Threshold > 0 {
+					fmt.Println("Enabling compression")
+					c.Compressed = true
+				} else {
+					fmt.Println("Received set compression packet with threshold <= 0, not enabling compression")
+				}
 			}
 		} else {
+			fmt.Println("received packet with compression=true")
+			b := make([]byte, 2048)
+			// c.TCP.SetReadDeadline(time.Now().Add(time.Millisecond * 250))
+			n, err := c.TCP.Read(b)
+			if err != nil {
+				panic(err)
+			}
 
+			fmt.Println("decrypting header")
+			c.Cipher.XORKeyStream(b[:n], b[:n])
+
+			fmt.Println("unmarshalling uncompressed header")
+			// Used to get initial length of packet
+			var q CompressedPacket
+			Unmarshal(b[:n], &q)
+
+			fullBuf := new(bytes.Buffer)
+			fullBuf.Write(b[:n])
+
+			// Read the rest of the bytes
+			for fullBuf.Len() < int(q.PacketLength)-3 {
+				b := make([]byte, 2048)
+				n, err := c.TCP.Read(b)
+				if err != nil {
+					panic(err)
+				}
+
+				c.Cipher.XORKeyStream(b[:n], b[:n])
+				fullBuf.Write(b[:n])
+			}
+
+			fmt.Println("read entire message")
+
+			var p CompressedPacket
+			Unmarshal(fullBuf.Bytes(), &p)
+
+			fmt.Println("packet length:", q.PacketLength)
+			fmt.Println("compressed data length:", q.DataLength)
+
+			var d CompressedData
+			if p.DataLength > 0 {
+				reader, err := zlib.NewReader(bytes.NewBuffer(q.Data))
+				if err != nil {
+					panic(err)
+				}
+
+				decompressed, err := io.ReadAll(reader)
+				if err != nil {
+					panic(err)
+				}
+
+				hex.Dump(decompressed)
+
+				Unmarshal(decompressed, &d)
+			} else {
+				Unmarshal(p.Data, &d)
+			}
+
+			fmt.Println("New compressed packet:", d.PacketID)
+			switch d.PacketID {
+			case 0x02:
+				// Login Success
+				fmt.Println("Received login success")
+
+			case 0x18:
+				var plugin PluginMessage
+				Unmarshal(d.Data, &plugin)
+				fmt.Println("plugin message in namespace", plugin.Namespace)
+			}
 		}
 	}
 }

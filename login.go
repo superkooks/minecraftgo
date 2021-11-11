@@ -5,6 +5,13 @@ type LoginStart struct {
 	Username String
 }
 
+type EncryptionResponse struct {
+	SharedSecretLen VarInt
+	SharedSecret    []byte
+	VerifyTokenLen  VarInt
+	VerifyToken     []byte
+}
+
 // SERVER
 
 // Not used - for reference only
@@ -16,9 +23,11 @@ type EncryptionRequest struct {
 	VerifyToken       []byte
 }
 
-type EncryptionResponse struct {
-	SharedSecretLen VarInt
-	SharedSecret    []byte
-	VerifyTokenLen  VarInt
-	VerifyToken     []byte
+type SetCompression struct {
+	Threshold VarInt
+}
+
+type PluginMessage struct {
+	Namespace String
+	Data      []byte
 }

@@ -11,6 +11,7 @@ import (
 
 type Conn struct {
 	TCP        *net.TCPConn
+	Buffer     *bytes.Buffer
 	Compressed bool
 	Encrypted  bool
 	AuthResp   APIAuthResponse
