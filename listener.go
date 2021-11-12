@@ -15,102 +15,48 @@ import (
 	"strings"
 )
 
-func (c *Conn) ReadStream() {
-	for {
-		b := make([]byte, 2048)
-		n, err := c.TCP.Read(b)
-		if err != nil {
-			panic(err)
-		}
-
-		_, err = c.Buffer.Write(b[:n])
-		if err != nil {
-			panic(err)
-		}
+func (c *Conn) Read(buf []byte) (n int, err error) {
+	n, err = c.TCP.Read(buf)
+	if err != nil {
+		return n, err
 	}
+
+	if c.Encrypted {
+		c.Cipher.XORKeyStream(buf[:n], buf[:n])
+	}
+
+	return
 }
 
 func (c *Conn) Listener() {
 	for {
-		// TODO Deduplicate the code
 
 		if !c.Compressed {
-			c.Buffer.
+			var p UncompressedPacket
+			Unmarshal(c, &p)
 
-			b := make([]byte, 2048)
-			n, err := c.TCP.Read(b)
-			if err != nil {
-				panic(err)
-			}
+			fmt.Println("New packet:", p.PacketID)
 
-			var fullBuf *bytes.Buffer
-			if c.Encrypted {
-				c.Cipher.XORKeyStream(b[:n], b[:n])
-
-				// Used to get initial length of packet
-				var q UncompressedPacket
-				Unmarshal(b[:n], &q)
-
-				fullBuf = new(bytes.Buffer)
-				fullBuf.Write(b[:n])
-
-				// Read the rest of the bytes
-				for fullBuf.Len() < int(q.Length)-3 {
-					b := make([]byte, 2048)
-					n, err := c.TCP.Read(b)
-					if err != nil {
-						panic(err)
-					}
-
-					c.Cipher.XORKeyStream(b[:n], b[:n])
-					fullBuf.Write(b[:n])
-				}
-			} else {
-				// Used to get initial length of packet
-				var q UncompressedPacket
-				Unmarshal(b[:n], &q)
-
-				fullBuf = new(bytes.Buffer)
-				fullBuf.Write(b[:n])
-
-				// Read the rest of the bytes
-				for fullBuf.Len() < int(q.Length)-3 {
-					b := make([]byte, 2048)
-					n, err := c.TCP.Read(b)
-					if err != nil {
-						panic(err)
-					}
-
-					fullBuf.Write(b[:n])
-				}
-			}
-
-			var q UncompressedPacket
-			Unmarshal(fullBuf.Bytes(), &q)
-			fmt.Println("New packet:", q.PacketID)
-
-			switch q.PacketID {
+			switch p.PacketID {
 			case 0x01:
 				// Encryption Request
 
 				// Special unmarshalling due to multiple byte arrays
 				var serverID String
-				q.Data = serverID.Deserialize(q.Data)
+				serverID.Deserialize(c)
 				fmt.Println("server id:", serverID)
 
 				var pubKeyLength VarInt
-				q.Data = pubKeyLength.Deserialize(q.Data)
+				pubKeyLength.Deserialize(c)
 
-				var pubKey []byte
-				pubKey = q.Data[:pubKeyLength]
-				q.Data = q.Data[pubKeyLength:]
+				pubKey := make([]byte, int(pubKeyLength))
+				c.Read(pubKey)
 
 				var verifyTokenLength VarInt
-				q.Data = verifyTokenLength.Deserialize(q.Data)
+				verifyTokenLength.Deserialize(c)
 
-				var verifyToken []byte
-				verifyToken = q.Data[:verifyTokenLength]
-				q.Data = q.Data[verifyTokenLength:]
+				verifyToken := make([]byte, int(verifyTokenLength))
+				c.Read(verifyToken)
 
 				sharedSecret := make([]byte, 16)
 				rand.Read(sharedSecret)
@@ -154,15 +100,17 @@ func (c *Conn) Listener() {
 				}
 
 				// Send encryption response
+				p := Marshal(EncryptionResponse{
+					SharedSecretLen: VarInt(len(encShared)),
+					SharedSecret:    encShared,
+					VerifyTokenLen:  VarInt(len(encVerify)),
+					VerifyToken:     encVerify,
+				})
 				c.TCP.Write(Marshal(UncompressedPacket{
 					PacketID: 0x01,
-					Data: Marshal(EncryptionResponse{
-						SharedSecretLen: VarInt(len(encShared)),
-						SharedSecret:    encShared,
-						VerifyTokenLen:  VarInt(len(encVerify)),
-						VerifyToken:     encVerify,
-					}),
+					Length:   VarInt(len(p)),
 				}))
+				c.TCP.Write(p)
 
 				c.Encrypted = true
 
@@ -177,83 +125,44 @@ func (c *Conn) Listener() {
 			case 0x03:
 				// Set Compression
 				var comp SetCompression
-				Unmarshal(q.Data, &comp)
+				Unmarshal(c, &comp)
 
 				if comp.Threshold > 0 {
 					fmt.Println("Enabling compression")
 					c.Compressed = true
+					c.CompressionThreshold = int(comp.Threshold)
 				} else {
 					fmt.Println("Received set compression packet with threshold <= 0, not enabling compression")
 				}
 			}
 		} else {
-			fmt.Println("received packet with compression=true")
-			b := make([]byte, 2048)
-			// c.TCP.SetReadDeadline(time.Now().Add(time.Millisecond * 250))
-			n, err := c.TCP.Read(b)
-			if err != nil {
-				panic(err)
-			}
-
-			fmt.Println("decrypting header")
-			c.Cipher.XORKeyStream(b[:n], b[:n])
-
-			fmt.Println("unmarshalling uncompressed header")
 			// Used to get initial length of packet
-			var q CompressedPacket
-			Unmarshal(b[:n], &q)
+			var p CompressedPacket
+			Unmarshal(c, &p)
 
-			fullBuf := new(bytes.Buffer)
-			fullBuf.Write(b[:n])
-
-			// Read the rest of the bytes
-			for fullBuf.Len() < int(q.PacketLength)-3 {
-				b := make([]byte, 2048)
-				n, err := c.TCP.Read(b)
+			var reader io.Reader
+			if int(p.DataLength) >= c.CompressionThreshold {
+				var err error
+				reader, err = zlib.NewReader(c)
 				if err != nil {
 					panic(err)
 				}
-
-				c.Cipher.XORKeyStream(b[:n], b[:n])
-				fullBuf.Write(b[:n])
+			} else {
+				reader = c
 			}
-
-			fmt.Println("read entire message")
-
-			var p CompressedPacket
-			Unmarshal(fullBuf.Bytes(), &p)
-
-			fmt.Println("packet length:", q.PacketLength)
-			fmt.Println("compressed data length:", q.DataLength)
 
 			var d CompressedData
-			if p.DataLength > 0 {
-				reader, err := zlib.NewReader(bytes.NewBuffer(q.Data))
-				if err != nil {
-					panic(err)
-				}
-
-				decompressed, err := io.ReadAll(reader)
-				if err != nil {
-					panic(err)
-				}
-
-				hex.Dump(decompressed)
-
-				Unmarshal(decompressed, &d)
-			} else {
-				Unmarshal(p.Data, &d)
-			}
+			Unmarshal(reader, &d)
 
 			fmt.Println("New compressed packet:", d.PacketID)
 			switch d.PacketID {
 			case 0x02:
 				// Login Success
-				fmt.Println("Received login success")
+				fmt.Println("*** Received login success")
 
 			case 0x18:
 				var plugin PluginMessage
-				Unmarshal(d.Data, &plugin)
+				Unmarshal(reader, &plugin)
 				fmt.Println("plugin message in namespace", plugin.Namespace)
 			}
 		}

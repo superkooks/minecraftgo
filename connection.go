@@ -10,12 +10,12 @@ import (
 )
 
 type Conn struct {
-	TCP        *net.TCPConn
-	Buffer     *bytes.Buffer
-	Compressed bool
-	Encrypted  bool
-	AuthResp   APIAuthResponse
-	Cipher     cipher.Stream
+	TCP                  *net.TCPConn
+	Compressed           bool
+	Encrypted            bool
+	AuthResp             APIAuthResponse
+	Cipher               cipher.Stream
+	CompressionThreshold int
 }
 
 func Connect(ip *net.TCPAddr, username string, email string, password string) (*Conn, error) {
@@ -51,23 +51,27 @@ func Connect(ip *net.TCPAddr, username string, email string, password string) (*
 	go c.Listener()
 
 	// Send handshake (state=2)
+	p := Marshal(Handshake{
+		Version: 340,
+		Address: String(ip.IP.String() + "\x00FML\x00"), // Not used
+		Port:    uint16(ip.Port),                        // Not used
+		Next:    2,
+	})
 	c.TCP.Write(Marshal(UncompressedPacket{
 		PacketID: 0,
-		Data: Marshal(Handshake{
-			Version: 340,
-			Address: String(ip.IP.String() + "\x00FML\x00"), // Not used
-			Port:    uint16(ip.Port),                        // Not used
-			Next:    2,
-		}),
+		Length:   VarInt(len(p)),
 	}))
+	c.TCP.Write(p)
 
 	// Send Login Start
+	p = Marshal(LoginStart{
+		Username: String(username),
+	})
 	c.TCP.Write(Marshal(UncompressedPacket{
 		PacketID: 0,
-		Data: Marshal(LoginStart{
-			Username: String(username),
-		}),
+		Length:   VarInt(len(p)),
 	}))
+	c.TCP.Write(p)
 	fmt.Println("sent login request")
 
 	return c, nil
@@ -91,43 +95,20 @@ func Ping(ip *net.TCPAddr) ([]byte, error) {
 	}
 	c.TCP.Write(Marshal(UncompressedPacket{
 		PacketID: 0,
-		Data:     Marshal(p),
 	}))
+	c.TCP.Write(Marshal(p))
 
 	// Send request
 	c.TCP.Write(Marshal(UncompressedPacket{
 		PacketID: 0,
 	}))
 
-	// Wait for response
-	b := make([]byte, 2048)
-	n, err := c.TCP.Read(b)
-	if err != nil {
-		return []byte{}, err
-	}
-
 	// Used to get initial length of packet
 	var q UncompressedPacket
-	Unmarshal(b[:n], &q)
-
-	fullBuf := new(bytes.Buffer)
-	fullBuf.Write(b[:n])
-
-	// Read the rest of the bytes
-	for fullBuf.Len() < int(q.Length)-5 {
-		b := make([]byte, 2048)
-		n, err := c.TCP.Read(b)
-		if err != nil {
-			return []byte{}, err
-		}
-
-		fullBuf.Write(b[:n])
-	}
-
-	Unmarshal(fullBuf.Bytes(), &q)
+	Unmarshal(c.TCP, &q)
 
 	var out String
-	Unmarshal(q.Data, &out)
+	Unmarshal(c.TCP, &out)
 
 	return []byte(out), nil
 }

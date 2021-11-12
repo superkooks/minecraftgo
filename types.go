@@ -1,5 +1,7 @@
 package minecraftgo
 
+import "io"
+
 type VarInt int
 
 func (v VarInt) Serialize() []byte {
@@ -16,14 +18,18 @@ func (v VarInt) Serialize() []byte {
 }
 
 // Returns the rest of the data that has not been read
-func (v *VarInt) Deserialize(data []byte) []byte {
+func (v *VarInt) Deserialize(data io.Reader) {
 	value := 0
 	index := 0
 	for {
-		b := data[index]
-		value |= int(b&0b01111111) << (index * 7)
+		b := make([]byte, 1)
+		_, err := data.Read(b)
+		if err != nil {
+			panic(err)
+		}
+		value |= int(b[0]&0b01111111) << (index * 7)
 
-		if (data[index] & 0b10000000) == 0 {
+		if (b[0] & 0b10000000) == 0 {
 			break
 		}
 
@@ -35,7 +41,6 @@ func (v *VarInt) Deserialize(data []byte) []byte {
 	}
 
 	*v = VarInt(value)
-	return data[index+1:]
 }
 
 type String string
@@ -45,11 +50,15 @@ func (s String) Serialize() []byte {
 }
 
 // Returns the rest of the data that has not been read
-func (s *String) Deserialize(data []byte) []byte {
+func (s *String) Deserialize(data io.Reader) {
 	length := new(VarInt)
-	data = length.Deserialize(data)
+	length.Deserialize(data)
 
-	*s = String(data[:int(*length)])
+	b := make([]byte, int(*length))
+	_, err := data.Read(b)
+	if err != nil {
+		panic(err)
+	}
 
-	return data[int(*length):]
+	*s = String(b)
 }

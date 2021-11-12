@@ -9,7 +9,7 @@ import (
 func Marshal(m interface{}) []byte {
 	// Treat uncompressed packet differently
 	if p, ok := m.(UncompressedPacket); ok {
-		p.Length = VarInt(len(Marshal(p.PacketID)) + len(p.Data))
+		p.Length += VarInt(len(Marshal(p.PacketID)))
 		m = p
 	}
 
